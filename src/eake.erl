@@ -1,5 +1,7 @@
 -module(eake).
--export([run/1, task/3, namespace/2, process_command/1, run_task/2]).
+-define(VERSION, "1.0").
+-vsn(?VERSION).
+-export([run/1, task/3, namespace/2, process_command/1, process_command/0,run_task/2]).
 
 task(Name, Desc, Code) ->
 	{task, Name, Desc, Code}.
@@ -10,30 +12,54 @@ namespace(Name, TaskList) ->
 run(Command) ->
 	io:format("~s",[os:cmd(Command)]).
 
+show_info() ->
+	io:format("Eake ver. ~s ~n", [?VERSION]),
+	{ok, CurrentDir} = file:get_cwd(),
+	io:format("(in ~s)~n", [CurrentDir]).
+
+process_command() ->
+	io:format("eake [target]~n"),
+	init:stop().
+	
 process_command(Args) ->
+	show_info(),
 	case Args of 
 		[TaskName | Params] -> 
-			Files = [ "eake", "eakefile"],
-			io:format("Preparing EAKE:~n"),
-			prepare_files(Files),
-			io:format("Running   TASK: \"~s\"~n~n", [TaskName]),
-			run_task(list_to_atom(TaskName), Params);
-		[] -> io:format("Missing arguments!")
-	end.
+			Files = ["eakefile"],
+			[Eakefile | _] = Files, 
+			case filelib:is_regular([Eakefile | ".erl"]) of
+				true ->
+					prepare_files(Files),
+					run_task(TaskName, Params);
+				false ->
+					io:format("Missing eakefile!~n")
+			end;
+		[] -> io:format("Missing arguments!~n")
+	end,
+	init:stop().
 
 run_task(TaskName, Params) ->
 	case find_task(TaskName) of
-		{ok, Code} -> Code(Params);
-		error -> io:format("Unknown Task!")
+		{ok, Code} -> 
+			io:format("~nRunning target: ~n  \"~s\"~n~n", [TaskName]),
+		 	Code(Params);
+		error -> io:format("~nUnknown Task!~n")
 	end.
 	
+exist_file(FileName) ->
+	case filelib:is_regular(FileName) of
+		true -> {exist, FileName};
+		false -> {not_exist, FileName}
+	end.
+		
 prepare_files(Files) ->
+	io:format("~nBuilding:~n"),
 	lists:foreach(fun(File) ->
 		case load_file(build_file(delete_file(File))) of
 			{ok, FileName} -> 
-				io:format("  ~s: ok~n", [FileName]);
+				io:format("  ~s: ok", [FileName]);
 			{error, FileName} ->
-				io:format("  ~s: faild~n", [FileName])
+				io:format("  ~s: faild", [FileName])
 		end
 	end, Files).
 		
@@ -54,9 +80,14 @@ delete_file({ok, FileName}) ->
 	delete_file(FileName);
 
 delete_file(FileName) ->
-	case file:delete([FileName | ".beam"]) of
-		ok -> {ok, FileName};
-		{error, _} -> {error, FileName}
+	BeamFileName = [FileName | ".beam"],
+	case exist_file(BeamFileName) of 
+		{exist, BeamFileToDelete} ->
+			case file:delete(BeamFileToDelete) of
+				ok -> {ok, FileName};
+				{error, _} -> {error, FileName}
+			end;
+		{not_exist, _} -> {ok, FileName}
 	end.
 
 
