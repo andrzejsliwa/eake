@@ -1,2 +1,2 @@
 #!/bin/sh
-erl -noshell -s eake process_command $@
+erl -noshell -s eake process_command "$@"
