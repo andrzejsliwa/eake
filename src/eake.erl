@@ -2,13 +2,17 @@
 -define(VERSION, "1.0").
 -vsn(?VERSION).
 
--export ([
-	task/3,
-	namespace/3,
-	test_all/0
-]).
-	
+-export ([task/3, namespace/3, process_command/1, run_target/2, run/1]).
+
+
+-ifdef(TEST).
+-export([test_all/0, assert_equal/3, run_tests/1]).
 -define(LOG(X), io:format("~nLOGGER : [~s]~n",[X])).
+-define(assertEqual(Expected, Value), assert_equal(Expected, Value, ?LINE)).
+-else.
+-define(LOG(X),).
+-endif.
+
 
 %%{-----------------------------------------------------------------}
 %% BUILD_FILE
@@ -18,8 +22,61 @@ task(Name, Desc, Code) ->
 namespace(Name, Desc, TaskList) ->
 	{eake_namespace, Name, Desc, TaskList}.
 
+process_command(Args) ->
+	EakeFile = "eakefile",
+	case exist_file([EakeFile | ".erl"]) of
+		{exist, _ } ->
+			prepare_file(EakeFile),
+			[ prepare_target(Target) || Target <- Args ];
+		_Oops -> io:format("Missing ~s~n", [EakeFile])
+	end,
+	init:stop().
+	
+prepare_target(Target) ->
+	Result = re:split(atom_to_list(Target), "[=]", [{return, list}]),
+	case length(Result) of
+		1 -> run_target(Target, []);
+		2 ->
+			[NewTarget, TermsString] = Result,
+			TargetParams = string:concat(TermsString, "."),
+			case get_terms(get_tokens(TargetParams)) of
+				{ok, Params} -> run_target(list_to_atom(NewTarget), Params);
+				{error} -> io:format("Wrong Target Params.")
+			end
+	end.
 
+
+run(Command) ->
+	io:format("~s", [os:cmd(Command)]).
+	
+% run target by string name ex. "db:migrate"
+run_target(Target, Params) ->
+	TargetAsList = atom_to_list(Target),
+	Targets = string:tokens(TargetAsList, ":"),
+	case find_target(Targets, eakefile:execute()) of % move to module name dynamic
+		{_, _, Code} ->
+			io:format("Running Target: ~n \"~s\"~n~n", [TargetAsList]),
+			Code(Params),
+			{ok};
+		{missing_target} ->
+			io:format("Unknown Target! ~n"),
+			{missing_target}
+	end.
 %%{-----------------------------------------------------------------}
+get_tokens(String) ->
+	case erl_scan:string(String) of
+		{ok, Tokens, _} -> {ok, Tokens};
+		_Oops -> {error}
+	end.
+
+get_terms({error}) ->
+	{error};
+	
+get_terms({ok, Tokens}) ->
+	case erl_parse:parse_term(Tokens) of
+		{ok, Terms} -> {ok, Terms};
+		_Oops -> {error}
+	end.
 
 
 prepare_file(File) ->
@@ -122,9 +179,31 @@ delete_file(FileName) ->
 		{not_exist, _} -> {ok, FileName}
 	end.
 
+-ifdef(TEST).
+%%{-----------------------------------------------------------------}
+%% TEST HELPERS
+%% test runner with preety printer for tests output
+run_tests(TestList) ->
+	io:format("[Running Tests:]~n"),
+	lists:foreach(fun({Name, Fun}) ->
+		io:format("~n TEST CASE: [~s] :",[Name]),
+		Fun()
+	end, TestList),
+	io:format("~n").
+
+%% equal assertion
+assert_equal(Expected, Value, Line) ->
+	case Expected of 
+		Value -> io:format(".");
+		_Oops -> 
+			io:format("~n   FAILD:~n   EXPECTED ~w,~n   IS       ~w - [LINE: ~B]~n", 
+				[Expected, Value, Line])
+	end.
+
+
+
 %%{-----------------------------------------------------------------}
 %% All Data for Tests & Tests
-
 %% TEST DATA
 get_migration_fun() -> fun(_) -> io:format("in migration") end.
 get_migration_desc() -> "That is migration".
@@ -138,86 +217,76 @@ get_example_nested_namespace_list(Fun) -> [get_example_nested_namespace(Fun)].
 
 %% All Tests
 
+get_terms_test() ->
+	?assertEqual({ok, [1,2]}, get_terms(get_tokens("[1,2]."))),
+	?assertEqual({ok, 1}, get_terms(get_tokens("1."))),
+	?assertEqual({ok, {name, "name"}}, get_terms(get_tokens("{name, \"name\"}."))),
+	?assertEqual({error}, get_terms(get_tokens("[1,2]"))).
+	
+get_tokens_test() ->
+	?assertEqual({ok,[{'[',1},{integer,1,1},{',',1},{integer,1,2},{']',1}]}, get_tokens("[1,2]")).
 
 prepare_file_test() ->
 	FileName = "test_example",
 	BeamFileName = [FileName | ".beam"],
 	prepare_file(FileName),
-	assert_equal({exist, BeamFileName}, exist_file(BeamFileName)),
+	?assertEqual({exist, BeamFileName}, exist_file(BeamFileName)),
 	WrongFileName = "test_ex",
 	BeamWrongFileName = [WrongFileName | ".beam"],
 	prepare_file(WrongFileName),
-	assert_equal({not_exist, BeamWrongFileName}, exist_file(BeamWrongFileName)).
-	
+	?assertEqual({not_exist, BeamWrongFileName}, exist_file(BeamWrongFileName)).
+
 find_target_test() ->
 	Fun = get_migration_fun(),
 	Targets = [ "db", "migrate" ],
-	assert_equal({migrate, get_migration_desc(), Fun},find_target(Targets, get_example_namespace_list(Fun))),
+	?assertEqual({migrate, get_migration_desc(), Fun},find_target(Targets, get_example_namespace_list(Fun))),
 	NestedTargets = [ "next", "db", "migrate" ],
-	assert_equal({migrate, get_migration_desc(), Fun},find_target(NestedTargets, get_example_nested_namespace_list(Fun))),
+	?assertEqual({migrate, get_migration_desc(), Fun},find_target(NestedTargets, get_example_nested_namespace_list(Fun))),
 	WrongTargets = [ "db", "wrong"],
-	assert_equal({missing_target},find_target(WrongTargets, get_example_namespace_list(Fun))).
-	
+	?assertEqual({missing_target},find_target(WrongTargets, get_example_namespace_list(Fun))).
+
 exist_file_test() ->
 	FileName = "test_example.erl",
-	assert_equal({exist, FileName}, exist_file(FileName)),
-	assert_equal({not_exist, "unknown"}, exist_file("unknown")).
+	?assertEqual({exist, FileName}, exist_file(FileName)),
+	?assertEqual({not_exist, "unknown"}, exist_file("unknown")).
 
 delete_file_test() ->
 	FileName = "test_example",
-	assert_equal({ok, FileName}, build_file(FileName)),
-	assert_equal({ok, FileName}, delete_file(FileName)),
-	assert_equal({ok, FileName}, delete_file({ok, FileName})),
-	assert_equal({ok, "unknown"}, delete_file("unknown")),
-	assert_equal({ok, "unknown"}, delete_file({ok, "unknown"})),
-	assert_equal({error, FileName}, delete_file({error, FileName})).
+	?assertEqual({ok, FileName}, build_file(FileName)),
+	?assertEqual({ok, FileName}, delete_file(FileName)),
+	?assertEqual({ok, FileName}, delete_file({ok, FileName})),
+	?assertEqual({ok, "unknown"}, delete_file("unknown")),
+	?assertEqual({ok, "unknown"}, delete_file({ok, "unknown"})),
+	?assertEqual({error, FileName}, delete_file({error, FileName})).
 
 build_file_test() ->
 	FileName = "test_example",
-	assert_equal({ok, FileName}, build_file(FileName)),
-	assert_equal({ok, FileName}, build_file({ok, FileName})),
-	assert_equal({error, "unknown"}, build_file("unknown")),
-	assert_equal({error, "unknown"}, build_file({ok, "unknown"})),
-	assert_equal({error, FileName}, build_file({error, FileName})).
+	?assertEqual({ok, FileName}, build_file(FileName)),
+	?assertEqual({ok, FileName}, build_file({ok, FileName})),
+	?assertEqual({error, "unknown"}, build_file("unknown")),
+	?assertEqual({error, "unknown"}, build_file({ok, "unknown"})),
+	?assertEqual({error, FileName}, build_file({error, FileName})).
 
 load_file_test() ->
 	FileName = "test_example",
-	assert_equal({ok, FileName}, build_file(FileName)),
-	assert_equal({ok, FileName}, load_file(FileName)),
-	assert_equal({ok, FileName}, load_file({ok, FileName})),
-	assert_equal({error, "unknown"}, load_file("unknown")),
-	assert_equal({error, "unknown"}, load_file({ok, "unknown"})),
-	assert_equal({error, FileName}, load_file({error, FileName})).
-
+	?assertEqual({ok, FileName}, build_file(FileName)),
+	?assertEqual({ok, FileName}, load_file(FileName)),
+	?assertEqual({ok, FileName}, load_file({ok, FileName})),
+	?assertEqual({error, "unknown"}, load_file("unknown")),
+	?assertEqual({error, "unknown"}, load_file({ok, "unknown"})),
+	?assertEqual({error, FileName}, load_file({error, FileName})).
 
 
 %% pulbic function for runing all tests
-test_all() -> run_tests([
+test_all() -> 
+	run_tests([
+		{get_terms_test, fun get_terms_test/0},
+		{get_tokens_test, fun get_tokens_test/0},
 		{load_file_test, fun load_file_test/0},
 		{build_file_test, fun build_file_test/0},
 		{delete_file_test, fun delete_file_test/0},
 		{exist_file_test, fun exist_file_test/0},
 		{find_target_test, fun find_target_test/0},
 		{prepare_file_test, fun prepare_file_test/0}
-	]).
-
-%% test runner with preety printer for tests output
-run_tests(TestList) ->
-	io:format("Running Tests:~n"),
-	lists:foreach(fun({Name, Fun}) ->
-		io:format("~n  - ~s :",[Name]),
-		Fun()
-	end, TestList),
-	io:format("~n").
-
-%% equal assertion
-assert_equal(Expected,Value) ->
-	case Expected of 
-		Value -> io:format(".");
-		_Oops -> io:format("FAILD~n      EXPECTED ~w,~n      IS       ~w~n", [Expected, Value])
-	end.
-	
-
-
-	
-	
+	]), init:stop().
+-endif.
