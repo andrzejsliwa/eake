@@ -133,11 +133,9 @@ find_target(TargetScopes, List) ->
         ({_, Name, _}) -> atom_to_list(Name) =:= Current
     end,
     case lists:filter(Search, List) of
-        [ {eake_task, Name, Desc, Code} | _ ] ->
-			{Name, Desc, Code};
-		[ {eake_namespace, _, TaskList} | _ ] ->
-			find_target(Rest, TaskList);
-		[] -> missing_target
+        [ {eake_task, Name, Desc, Code} | _ ] -> {Name, Desc, Code};
+        [ {eake_namespace, _, TaskList} | _ ] -> find_target(Rest, TaskList);
+        [] -> missing_target
     end.
 
 -spec run(Command :: string()) -> ok.
