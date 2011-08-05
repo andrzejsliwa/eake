@@ -120,7 +120,6 @@ invoke_target(Target, Params) ->
     case find_target(TargetsScopes, eakefile:execute()) of
         {_, _, Fun} ->
             Fun(Params),
-            io:format("Dziala"),
             ok;
         missing_target -> io:format("Missing '~s' target~n", [Target])
     end.
